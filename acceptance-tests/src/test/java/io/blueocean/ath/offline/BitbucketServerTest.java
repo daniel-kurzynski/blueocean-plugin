@@ -67,7 +67,8 @@ public class BitbucketServerTest implements WebDriverMixin {
     }
 
     @Test
-    @Retry(3)
+    // @Retry(3)
+    @Ignore
     public void testCreationNoJenkinsfile() throws InterruptedException {
         BitbucketClient client = BitbucketClient.builder()
             .endPoint(ENDPOINT_URL)
