@@ -65,7 +65,7 @@ public class PipelineNodeGraphVisitor extends StandardChunkVisitor implements No
 
     private FlowNodeWrapper nextStage;
 
-    private FlowNode parallelEnd;
+    private Stack<FlowNode> parallelEnds = new Stack<>();
 
     public final Map<String, FlowNodeWrapper> nodeMap = new LinkedHashMap<>();
 
@@ -81,6 +81,7 @@ public class PipelineNodeGraphVisitor extends StandardChunkVisitor implements No
 
     private final ArrayDeque<FlowNode> pendingInputSteps = new ArrayDeque<>();
 
+    private final Stack<FlowNode> pendingBranchEndNodes = new Stack<>();
     private final Stack<FlowNode> parallelBranchEndNodes = new Stack<>();
     private final Stack<FlowNode> parallelBranchStartNodes = new Stack<>();
 
@@ -157,7 +158,7 @@ public class PipelineNodeGraphVisitor extends StandardChunkVisitor implements No
         captureOrphanParallelBranches();
 
         //if block stage node push it to stack as it may have nested stages
-        if(parallelEnd == null &&
+        if(parallelEnds.isEmpty() &&
             endNode instanceof StepEndNode
             && !PipelineNodeUtil.isSyntheticStage(((StepEndNode) endNode).getStartNode()) //skip synthetic stages
             && PipelineNodeUtil.isStage(((StepEndNode) endNode).getStartNode())) {
@@ -197,7 +198,7 @@ public class PipelineNodeGraphVisitor extends StandardChunkVisitor implements No
         boolean parallelNestedStages = false;
 
         // it's nested stages inside parallel so let's collect them later
-        if(parallelEnd != null){
+        if(!parallelEnds.isEmpty()){
             // nested stages not supported in scripted pipeline.
             if(!isDeclarative()){
                 return;
@@ -266,10 +267,10 @@ public class PipelineNodeGraphVisitor extends StandardChunkVisitor implements No
             }
         }else{
             if(parallelNestedStages) {
-                if(parallelBranchEndNodes.isEmpty()){
+                if(pendingBranchEndNodes.isEmpty()){
                     logger.debug("skip parsing stage {} but parallelBranchEndNodes is empty", stage);
                 } else {
-                    String endId = parallelBranchEndNodes.peek().getId();
+                    String endId = pendingBranchEndNodes.peek().getId();
                     Stack<FlowNodeWrapper> stack = stackPerEnd.get(endId);
                     if(stack==null){
                         stack=new Stack<>();
@@ -306,9 +307,9 @@ public class PipelineNodeGraphVisitor extends StandardChunkVisitor implements No
                                branchNode.getDisplayName(), branchNode.getDisplayFunctionName()));
         }
 
-        if(nestedbranches.size() != parallelBranchEndNodes.size()){
-            logger.debug(String.format("nestedBranches size: %s not equal to parallelBranchEndNodes: %s",
-                                       nestedbranches.size(), parallelBranchEndNodes.size()));
+        if(!pendingBranchEndNodes.isEmpty()){
+            logger.debug("Found parallelBranchEndNodes, but the corresponding branchStartNode yet");
+            parallelEnds.pop();
             return;
         }
 
@@ -331,7 +332,7 @@ public class PipelineNodeGraphVisitor extends StandardChunkVisitor implements No
                     }
                 } else {
                     GenericStatus genericStatus =
-                        StatusAndTiming.computeChunkStatus2(run, parallelStartNode, branchStartNode, endNode, parallelEnd);
+                        StatusAndTiming.computeChunkStatus2(run, parallelStartNode, branchStartNode, endNode, parallelEnds.peek());
                     status = new NodeRunStatus(genericStatus);
                 }
             } else {
@@ -411,8 +412,8 @@ public class PipelineNodeGraphVisitor extends StandardChunkVisitor implements No
             nodeMap.put(p.getId(), p);
         }
 
-        //reset parallelEnd node for next parallel block
-        this.parallelEnd = null;
+        //Removes parallelEnd node for next parallel block
+        this.parallelEnds.pop();
     }
 
     @Override
@@ -426,7 +427,7 @@ public class PipelineNodeGraphVisitor extends StandardChunkVisitor implements No
             }
         }
         captureOrphanParallelBranches();
-        this.parallelEnd = parallelEndNode;
+        this.parallelEnds.add(parallelEndNode);
     }
 
     @Override
@@ -439,6 +440,8 @@ public class PipelineNodeGraphVisitor extends StandardChunkVisitor implements No
         // Save actions for this branch, so we can add them to the FlowNodeWrapper later
         pendingActionsForBranches.put(branchStartNode, drainPipelineActions());
         nestedbranches.push(branchStartNode);
+        FlowNode endNode = pendingBranchEndNodes.pop();
+        parallelBranchEndNodes.add(endNode);
     }
 
     @Override
@@ -452,7 +455,7 @@ public class PipelineNodeGraphVisitor extends StandardChunkVisitor implements No
                                    ((StepEndNode) branchEndNode).getStartNode().getDisplayFunctionName()));
             }
         }
-        parallelBranchEndNodes.add(branchEndNode);
+        pendingBranchEndNodes.add(branchEndNode);
         parallelBranchStartNodes.add(parallelStartNode);
     }
 
